@@ -29,7 +29,7 @@
 # The transfer stack uses runtime reflection and name-based protocol adapters across
 # application, Ktor, Netty, and coroutine classes. These keeps are required for release
 # interoperability with alliance devices.
--keep class me.pipi.easyshare.** { *; }
+-keep class com.byd.easyshare.** { *; }
 -keep class org.libpag.** { *; }
 # Optional LZF/LZ4 decoders and their factories are not installed in the transfer pipelines.
 -keep class !io.netty.handler.codec.compression.LzfDecompressor,

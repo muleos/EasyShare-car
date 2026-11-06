@@ -27,15 +27,15 @@ val hasReleaseSigningCredentials =
         File(signingKeystorePath).isFile
 
 android {
-    namespace = "me.pipi.easyshare"
+    namespace = "com.byd.easyshare"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "me.pipi.easyshare"
+        applicationId = "com.byd.easyshare"
         minSdk = 31
         targetSdk = 37
-        versionCode = 9
-        versionName = "1.0.4-car"
+        versionCode = 11
+        versionName = "1.0.4-byd"
     }
 
     signingConfigs {

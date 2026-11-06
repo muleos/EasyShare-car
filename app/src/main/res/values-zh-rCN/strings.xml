@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Easy Share</string>
+    <string name="app_name">比亚迪分享</string>
     <string name="send">发送</string>
     <string name="discoverable_desc">可接收附近设备发送的文件</string>
     <string name="receiver_switch_title">后台接收</string>
