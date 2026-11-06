@@ -85,8 +85,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.google.android.material.color.ColorRoles
 import com.google.android.material.color.MaterialColors
+import me.pipi.easyshare.AppSettings
 import me.pipi.easyshare.R
 import me.pipi.easyshare.ui.PagAnimation
 import me.pipi.easyshare.ui.transfer.EasyShareSheetActions
@@ -110,6 +112,11 @@ fun MainScreen(
 ) {
     var showNameDialog by rememberSaveable { mutableStateOf(false) }
     var showBrandDialog by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val appSettings = remember(context) { AppSettings(context) }
+    var showP2pMacDialog by rememberSaveable { mutableStateOf(false) }
+    var customP2pMac by rememberSaveable { mutableStateOf(appSettings.customP2pMac) }
+    var skipMacValidation by rememberSaveable { mutableStateOf(appSettings.skipMacValidation) }
     val singlePaneListState = rememberLazyListState()
     val receiveControlsListState = rememberLazyListState()
     val introductionScrollState = rememberScrollState()
@@ -121,6 +128,18 @@ fun MainScreen(
             onSave = {
                 onDeviceNameChanged(it)
                 showNameDialog = false
+            },
+        )
+    }
+
+    if (showP2pMacDialog) {
+        P2pMacDialog(
+            currentMac = customP2pMac,
+            onDismiss = { showP2pMacDialog = false },
+            onSave = {
+                customP2pMac = it
+                appSettings.customP2pMac = it
+                showP2pMacDialog = false
             },
         )
     }
@@ -174,6 +193,28 @@ fun MainScreen(
                 trailing = {
                     Switch(
                         checked = state.secureReceiveOnly,
+                        onCheckedChange = null,
+                    )
+                },
+            )
+            SettingDivider()
+            NativeSettingItem(
+                title = "P2P MAC 地址（手动填写）",
+                summary = customP2pMac.ifBlank { "留空即可；跳过校验时无需填写" },
+                onClick = { showP2pMacDialog = true },
+            )
+            SettingDivider()
+            NativeSettingItem(
+                title = "跳过 MAC 校验（EasyShare 互传）",
+                summary = "开启后无需 Shizuku / ADB；仅对端为手机自带互传时需关闭",
+                checked = skipMacValidation,
+                onClick = {
+                    skipMacValidation = !skipMacValidation
+                    appSettings.skipMacValidation = skipMacValidation
+                },
+                trailing = {
+                    Switch(
+                        checked = skipMacValidation,
                         onCheckedChange = null,
                     )
                 },
@@ -612,6 +653,45 @@ internal fun heroIllustrationColorMatrix(color: Int): FloatArray {
         blueShift, -blueShift, 1f, 0f, 0f,
         0f, 0f, 0f, 1f, 0f,
     )
+}
+
+@Composable
+private fun P2pMacDialog(
+    currentMac: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var mac by rememberSaveable(currentMac) { mutableStateOf(currentMac) }
+    HomeSettingsSheet("P2P MAC 地址", onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().weight(1f, fill = false)
+                .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = "手动填写本机 P2P Device Address。留空且开启「跳过 MAC 校验」时，发送无需 Shizuku / ADB。仅当接收方是手机自带互传时，才需关闭跳过校验并填写真实值。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = mac,
+                onValueChange = { mac = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("P2P MAC") },
+                placeholder = { Text("40:b0:fa:82:17:46") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+            )
+        }
+        EasyShareSheetActions(
+            secondaryActionLabel = stringResource(R.string.cancel),
+            onSecondaryAction = onDismiss,
+            primaryActionLabel = stringResource(R.string.save),
+            onPrimaryAction = { onSave(mac.trim()) },
+            primaryActionEnabled = true,
+            emphasizePrimary = true,
+        )
+    }
 }
 
 @Composable

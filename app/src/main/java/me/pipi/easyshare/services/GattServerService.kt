@@ -393,7 +393,7 @@ class GattServerService : Service() {
                 }
                 require(p2pInfo.ssid.toByteArray().size in 1..MAX_SSID_BYTES)
                 require(p2pInfo.psk.toByteArray().size in MIN_PSK_BYTES..MAX_PSK_BYTES)
-                require(p2pInfo.mac.toByteArray().size <= MAX_MAC_BYTES)
+                // 接收侧不校验对端 P2P MAC（EasyShare 互传不依赖该字段）
                 require(p2pInfo.port in 1..65535)
                 if (SessionSecurity.usesModernProtocol(p2pInfo.cryptoVersion)) {
                     require(p2pInfo.authToken?.length in 32..128)

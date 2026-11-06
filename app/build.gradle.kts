@@ -35,7 +35,7 @@ android {
         minSdk = 31
         targetSdk = 37
         versionCode = 9
-        versionName = "1.0.4"
+        versionName = "1.0.4-car"
     }
 
     signingConfigs {
@@ -98,7 +98,7 @@ android {
 
 androidComponents {
     beforeVariants(selector().withBuildType("debug")) { variant ->
-        variant.enable = false
+        variant.enable = true
     }
     beforeVariants(selector().withBuildType("release")) { variant ->
         variant.hostTests.getValue(HostTestBuilder.UNIT_TEST_TYPE).enable = true

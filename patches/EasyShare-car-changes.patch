@@ -1,0 +1,208 @@
+diff --color -ruN '--exclude=build' '--exclude=.gradle' '--exclude=local.properties' '--exclude=*.apk' orig/EasyShare-main/app/build.gradle.kts EasyShare/app/build.gradle.kts
+--- a/app/build.gradle.kts	2026-10-19 02:05:08.000000000 +0800
++++ b/app/build.gradle.kts	2026-11-06 12:00:55.223599274 +0800
+@@ -35,7 +35,7 @@
+         minSdk = 31
+         targetSdk = 37
+         versionCode = 9
+-        versionName = "1.0.4"
++        versionName = "1.0.4-car"
+     }
+ 
+     signingConfigs {
+@@ -98,7 +98,7 @@
+ 
+ androidComponents {
+     beforeVariants(selector().withBuildType("debug")) { variant ->
+-        variant.enable = false
++        variant.enable = true
+     }
+     beforeVariants(selector().withBuildType("release")) { variant ->
+         variant.hostTests.getValue(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+diff --color -ruN '--exclude=build' '--exclude=.gradle' '--exclude=local.properties' '--exclude=*.apk' orig/EasyShare-main/app/src/main/java/me/pipi/easyshare/AppSettings.kt EasyShare/app/src/main/java/me/pipi/easyshare/AppSettings.kt
+--- a/app/src/main/java/me/pipi/easyshare/AppSettings.kt	2026-10-19 02:05:08.000000000 +0800
++++ b/app/src/main/java/me/pipi/easyshare/AppSettings.kt	2026-11-06 12:00:55.222599279 +0800
+@@ -45,4 +45,18 @@
+             prefs.edit { putInt("brandId", value) }
+         }
+ 
++    /** 手动填写的本机 P2P Device Address，留空表示不指定。 */
++    var customP2pMac: String
++        get() = prefs.getString("customP2pMac", null) ?: ""
++        set(value) {
++            prefs.edit { putString("customP2pMac", value.trim()) }
++        }
++
++    /** EasyShare 互传时不校验对端 P2P 身份，无需 Shizuku / ADB。默认开启。 */
++    var skipMacValidation: Boolean
++        get() = prefs.getBoolean("skipMacValidation", true)
++        set(value) {
++            prefs.edit { putBoolean("skipMacValidation", value) }
++        }
++
+ }
+diff --color -ruN '--exclude=build' '--exclude=.gradle' '--exclude=local.properties' '--exclude=*.apk' orig/EasyShare-main/app/src/main/java/me/pipi/easyshare/services/GattServerService.kt EasyShare/app/src/main/java/me/pipi/easyshare/services/GattServerService.kt
+--- a/app/src/main/java/me/pipi/easyshare/services/GattServerService.kt	2026-10-19 02:05:08.000000000 +0800
++++ b/app/src/main/java/me/pipi/easyshare/services/GattServerService.kt	2026-11-06 12:00:55.223599274 +0800
+@@ -393,7 +393,7 @@
+                 }
+                 require(p2pInfo.ssid.toByteArray().size in 1..MAX_SSID_BYTES)
+                 require(p2pInfo.psk.toByteArray().size in MIN_PSK_BYTES..MAX_PSK_BYTES)
+-                require(p2pInfo.mac.toByteArray().size <= MAX_MAC_BYTES)
++                // 接收侧不校验对端 P2P MAC（EasyShare 互传不依赖该字段）
+                 require(p2pInfo.port in 1..65535)
+                 if (SessionSecurity.usesModernProtocol(p2pInfo.cryptoVersion)) {
+                     require(p2pInfo.authToken?.length in 32..128)
+diff --color -ruN '--exclude=build' '--exclude=.gradle' '--exclude=local.properties' '--exclude=*.apk' orig/EasyShare-main/app/src/main/java/me/pipi/easyshare/services/P2pSenderService.kt EasyShare/app/src/main/java/me/pipi/easyshare/services/P2pSenderService.kt
+--- a/app/src/main/java/me/pipi/easyshare/services/P2pSenderService.kt	2026-10-19 02:05:08.000000000 +0800
++++ b/app/src/main/java/me/pipi/easyshare/services/P2pSenderService.kt	2026-11-06 12:00:55.222599279 +0800
+@@ -841,13 +841,22 @@
+ 
+                 // Native peers validate the P2P device identity, not the group's interface
+                 // MAC/BSSID. Android redacts our identity without LOCAL_MAC_ADDRESS.
+-                val p2pMac = DeviceUtils.usableP2pDeviceAddress(group.owner?.deviceAddress)
+-                    ?: DeviceUtils.usableP2pDeviceAddress(
+-                        ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
+-                    )
+-                    ?: throw ExceptionWithMessage(
+-                        "Missing P2P device address", IllegalStateException(), R.string.error_p2p_failed,
+-                    )
++                val localSettings = AppSettings(this@P2pSenderService)
++                val typedMac = localSettings.customP2pMac.trim()
++                val p2pMac = if (localSettings.skipMacValidation) {
++                    // EasyShare <-> EasyShare 不校验 P2P 设备身份：
++                    // 手填值合法就用，否则用占位值，永不因缺少 MAC 而失败。
++                    DeviceUtils.usableP2pDeviceAddress(typedMac) ?: "40:00:00:00:00:01"
++                } else {
++                    DeviceUtils.usableP2pDeviceAddress(typedMac)
++                        ?: DeviceUtils.usableP2pDeviceAddress(group.owner?.deviceAddress)
++                        ?: DeviceUtils.usableP2pDeviceAddress(
++                            ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
++                        )
++                        ?: throw ExceptionWithMessage(
++                            "Missing P2P device address", IllegalStateException(), R.string.error_p2p_failed,
++                        )
++                }
+                 if (BuildConfig.DEBUG) Log.d(TAG, "Resolved local P2P interface metadata")
+ 
+                 withTimeoutReason(
+diff --color -ruN '--exclude=build' '--exclude=.gradle' '--exclude=local.properties' '--exclude=*.apk' orig/EasyShare-main/app/src/main/java/me/pipi/easyshare/ui/main/MainScreen.kt EasyShare/app/src/main/java/me/pipi/easyshare/ui/main/MainScreen.kt
+--- a/app/src/main/java/me/pipi/easyshare/ui/main/MainScreen.kt	2026-10-19 02:05:08.000000000 +0800
++++ b/app/src/main/java/me/pipi/easyshare/ui/main/MainScreen.kt	2026-11-06 12:00:55.222599279 +0800
+@@ -85,8 +85,10 @@
+ import androidx.compose.ui.text.input.ImeAction
+ import androidx.compose.ui.text.style.TextAlign
+ import androidx.compose.ui.unit.dp
++import androidx.compose.ui.platform.LocalContext
+ import com.google.android.material.color.ColorRoles
+ import com.google.android.material.color.MaterialColors
++import me.pipi.easyshare.AppSettings
+ import me.pipi.easyshare.R
+ import me.pipi.easyshare.ui.PagAnimation
+ import me.pipi.easyshare.ui.transfer.EasyShareSheetActions
+@@ -110,6 +112,11 @@
+ ) {
+     var showNameDialog by rememberSaveable { mutableStateOf(false) }
+     var showBrandDialog by rememberSaveable { mutableStateOf(false) }
++    val context = LocalContext.current
++    val appSettings = remember(context) { AppSettings(context) }
++    var showP2pMacDialog by rememberSaveable { mutableStateOf(false) }
++    var customP2pMac by rememberSaveable { mutableStateOf(appSettings.customP2pMac) }
++    var skipMacValidation by rememberSaveable { mutableStateOf(appSettings.skipMacValidation) }
+     val singlePaneListState = rememberLazyListState()
+     val receiveControlsListState = rememberLazyListState()
+     val introductionScrollState = rememberScrollState()
+@@ -125,6 +132,18 @@
+         )
+     }
+ 
++    if (showP2pMacDialog) {
++        P2pMacDialog(
++            currentMac = customP2pMac,
++            onDismiss = { showP2pMacDialog = false },
++            onSave = {
++                customP2pMac = it
++                appSettings.customP2pMac = it
++                showP2pMacDialog = false
++            },
++        )
++    }
++
+     if (showBrandDialog) {
+         BrandSelectionDialog(
+             configuredBrandId = state.configuredBrandId,
+@@ -178,6 +197,28 @@
+                     )
+                 },
+             )
++            SettingDivider()
++            NativeSettingItem(
++                title = "P2P MAC 地址（手动填写）",
++                summary = customP2pMac.ifBlank { "留空即可；跳过校验时无需填写" },
++                onClick = { showP2pMacDialog = true },
++            )
++            SettingDivider()
++            NativeSettingItem(
++                title = "跳过 MAC 校验（EasyShare 互传）",
++                summary = "开启后无需 Shizuku / ADB；仅对端为手机自带互传时需关闭",
++                checked = skipMacValidation,
++                onClick = {
++                    skipMacValidation = !skipMacValidation
++                    appSettings.skipMacValidation = skipMacValidation
++                },
++                trailing = {
++                    Switch(
++                        checked = skipMacValidation,
++                        onCheckedChange = null,
++                    )
++                },
++            )
+         }
+         Spacer(Modifier.height(20.dp))
+         SettingsCard {
+@@ -615,6 +656,45 @@
+ }
+ 
+ @Composable
++private fun P2pMacDialog(
++    currentMac: String,
++    onDismiss: () -> Unit,
++    onSave: (String) -> Unit,
++) {
++    var mac by rememberSaveable(currentMac) { mutableStateOf(currentMac) }
++    HomeSettingsSheet("P2P MAC 地址", onDismiss) {
++        Column(
++            Modifier.fillMaxWidth().weight(1f, fill = false)
++                .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
++        ) {
++            Text(
++                text = "手动填写本机 P2P Device Address。留空且开启「跳过 MAC 校验」时，发送无需 Shizuku / ADB。仅当接收方是手机自带互传时，才需关闭跳过校验并填写真实值。",
++                style = MaterialTheme.typography.bodyMedium,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
++            Spacer(Modifier.height(12.dp))
++            OutlinedTextField(
++                value = mac,
++                onValueChange = { mac = it },
++                modifier = Modifier.fillMaxWidth(),
++                label = { Text("P2P MAC") },
++                placeholder = { Text("40:b0:fa:82:17:46") },
++                singleLine = true,
++                shape = RoundedCornerShape(16.dp),
++            )
++        }
++        EasyShareSheetActions(
++            secondaryActionLabel = stringResource(R.string.cancel),
++            onSecondaryAction = onDismiss,
++            primaryActionLabel = stringResource(R.string.save),
++            onPrimaryAction = { onSave(mac.trim()) },
++            primaryActionEnabled = true,
++            emphasizePrimary = true,
++        )
++    }
++}
++
++@Composable
+ private fun DeviceNameDialog(
+     currentName: String,
+     onDismiss: () -> Unit,

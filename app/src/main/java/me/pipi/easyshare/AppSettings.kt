@@ -45,4 +45,18 @@ class AppSettings(private val context: Context) {
             prefs.edit { putInt("brandId", value) }
         }
 
+    /** 手动填写的本机 P2P Device Address，留空表示不指定。 */
+    var customP2pMac: String
+        get() = prefs.getString("customP2pMac", null) ?: ""
+        set(value) {
+            prefs.edit { putString("customP2pMac", value.trim()) }
+        }
+
+    /** EasyShare 互传时不校验对端 P2P 身份，无需 Shizuku / ADB。默认开启。 */
+    var skipMacValidation: Boolean
+        get() = prefs.getBoolean("skipMacValidation", true)
+        set(value) {
+            prefs.edit { putBoolean("skipMacValidation", value) }
+        }
+
 }

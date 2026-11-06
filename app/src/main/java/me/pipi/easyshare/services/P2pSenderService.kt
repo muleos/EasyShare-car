@@ -841,13 +841,22 @@ class P2pSenderService : BaseP2pService() {
 
                 // Native peers validate the P2P device identity, not the group's interface
                 // MAC/BSSID. Android redacts our identity without LOCAL_MAC_ADDRESS.
-                val p2pMac = DeviceUtils.usableP2pDeviceAddress(group.owner?.deviceAddress)
-                    ?: DeviceUtils.usableP2pDeviceAddress(
-                        ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
-                    )
-                    ?: throw ExceptionWithMessage(
-                        "Missing P2P device address", IllegalStateException(), R.string.error_p2p_failed,
-                    )
+                val localSettings = AppSettings(this@P2pSenderService)
+                val typedMac = localSettings.customP2pMac.trim()
+                val p2pMac = if (localSettings.skipMacValidation) {
+                    // EasyShare <-> EasyShare 不校验 P2P 设备身份：
+                    // 手填值合法就用，否则用占位值，永不因缺少 MAC 而失败。
+                    DeviceUtils.usableP2pDeviceAddress(typedMac) ?: "40:00:00:00:00:01"
+                } else {
+                    DeviceUtils.usableP2pDeviceAddress(typedMac)
+                        ?: DeviceUtils.usableP2pDeviceAddress(group.owner?.deviceAddress)
+                        ?: DeviceUtils.usableP2pDeviceAddress(
+                            ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
+                        )
+                        ?: throw ExceptionWithMessage(
+                            "Missing P2P device address", IllegalStateException(), R.string.error_p2p_failed,
+                        )
+                }
                 if (BuildConfig.DEBUG) Log.d(TAG, "Resolved local P2P interface metadata")
 
                 withTimeoutReason(
