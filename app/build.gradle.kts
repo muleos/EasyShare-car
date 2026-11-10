@@ -34,8 +34,8 @@ android {
         applicationId = "com.byd.easyshare"
         minSdk = 31
         targetSdk = 37
-        versionCode = 11
-        versionName = "1.0.4-byd"
+        versionCode = 12
+        versionName = "1.0.5-car"
     }
 
     signingConfigs {

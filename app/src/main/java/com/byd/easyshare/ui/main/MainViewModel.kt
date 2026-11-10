@@ -14,17 +14,20 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.byd.easyshare.AppSettings
 import com.byd.easyshare.MyApplication
 import com.byd.easyshare.R
 import com.byd.easyshare.utils.DeviceUtils
 import com.byd.easyshare.utils.IncomingTransferUiCoordinator
 import com.byd.easyshare.utils.LiveUpdateCoordinator
+import com.byd.easyshare.utils.P2pMacManager
 import com.byd.easyshare.utils.TransferUiCoordinator
 import com.byd.easyshare.utils.ServiceState
 import com.byd.easyshare.utils.ShizukuUtils
@@ -49,6 +52,14 @@ data class MainUiState(
     val secureReceiveOnly: Boolean = false,
     val shizukuAvailable: Boolean = false,
     val shizukuGranted: Boolean = false,
+    /** 手填的 P2P MAC（已持久化）。 */
+    val customP2pMac: String = "",
+    /** ADB / 网卡自动捕获并持久化的 P2P MAC，关闭 ADB 后依然有效。 */
+    val savedP2pMac: String = "",
+    val savedP2pMacSource: String = "",
+    val savedP2pMacTime: Long = 0L,
+    val skipMacValidation: Boolean = true,
+    val capturingMac: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,6 +67,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = getApplication()
     private val settings = AppSettings(context)
     private var enableEnhancedModeAfterPermission = false
+    private var capturingMac = false
 
     private val _state = MutableStateFlow(
         MainUiState(
@@ -126,6 +138,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(
             shizukuGranted = granted && settings.enhancedModeEnabled
         )
+        // ADB / Shizuku 一授权成功就立刻读取并落盘，之后即使断开 ADB 也能发送。
+        if (granted) captureP2pMac()
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
@@ -134,6 +148,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             shizukuGranted = settings.enhancedModeEnabled &&
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED,
         )
+        // 车机通过 adb 启动 Shizuku 后会回调这里：自动保存真实 MAC。
+        captureP2pMac()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
@@ -176,6 +192,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         context.sendBroadcast(ServiceState.getQueryIntent())
+        refreshMacState()
+        // 冷启动也尝试一次：无 ADB 时可从 p2p0 网卡读到并保存。
+        captureP2pMac()
+    }
+
+    /** 回到前台时：还没保存过地址、或 ADB 正连着，就再捕获一次（含地址变化的情况）。 */
+    fun onForeground() {
+        refreshMacState()
+        val adbGranted = _state.value.shizukuAvailable &&
+            runCatching {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+        if (_state.value.savedP2pMac.isEmpty() || adbGranted) captureP2pMac()
+    }
+
+    /** 把持久化的 MAC 设置同步到界面。 */
+    fun refreshMacState() {
+        val saved = P2pMacManager.current(context)
+        _state.value = _state.value.copy(
+            customP2pMac = settings.customP2pMac,
+            savedP2pMac = saved?.mac ?: "",
+            savedP2pMacSource = saved?.source ?: "",
+            savedP2pMacTime = saved?.time ?: 0L,
+            skipMacValidation = settings.skipMacValidation,
+        )
+    }
+
+    /** 设置页「手动填写 MAC」的保存动作：写入本机，重启 / 关闭 ADB 后仍然有效。 */
+    fun setCustomP2pMac(value: String) {
+        settings.customP2pMac = value
+        refreshMacState()
+    }
+
+    fun setSkipMacValidation(enabled: Boolean) {
+        settings.skipMacValidation = enabled
+        refreshMacState()
+    }
+
+    fun clearSavedP2pMac() {
+        P2pMacManager.clear(context)
+        refreshMacState()
+        Toast.makeText(context, "已清除自动保存的 MAC", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 捕获并持久化本机真实 P2P MAC。
+     * ADB / Shizuku 可用且已授权时优先走 WifiP2pManager.requestDeviceInfo，
+     * 否则退回免权限的 p2p0 网卡读取；成功后写入 SharedPreferences。
+     * [showResult] 为 true 时弹出结果提示（设置页手动触发）。
+     */
+    fun captureP2pMac(showResult: Boolean = false) {
+        if (capturingMac) return
+        capturingMac = true
+        _state.value = _state.value.copy(capturingMac = true)
+        viewModelScope.launch {
+            val adbGranted = _state.value.shizukuAvailable &&
+                runCatching {
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                }.getOrDefault(false)
+            val result = withContext(Dispatchers.IO) {
+                runCatching { P2pMacManager.capture(context, adbGranted) }.getOrNull()
+            }
+            refreshMacState()
+            capturingMac = false
+            _state.value = _state.value.copy(capturingMac = false)
+            if (showResult) {
+                val message = if (result != null) {
+                    "已保存 MAC ${result.mac}（${P2pMacManager.sourceLabel(result.source)}），关闭 ADB 后仍可发送"
+                } else {
+                    "未读到真实 MAC：请确认 ADB / Shizuku 已授权，或在「手动填写 MAC」中输入地址"
+                }
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun setReceiverEnabled(enabled: Boolean) {

@@ -1,6 +1,8 @@
 package com.byd.easyshare
 
+import android.content.ClipData
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -87,6 +89,19 @@ class MainActivity : ComponentActivity() {
                     viewModel.setReceivePath(uri)
                 }
 
+                // 应用内发送：优先调起系统文档选择器（SAF，支持多选）；
+                // 部分车机固件没有 DocumentsUI，则回退到通用「打开文件」选择器。
+                val chooseFilesFallback = rememberLauncherForActivityResult(
+                    ActivityResultContracts.GetMultipleContents()
+                ) { uris ->
+                    if (uris.isNotEmpty()) launchShareFiles(uris)
+                }
+                val chooseFiles = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenMultipleDocuments()
+                ) { uris ->
+                    if (uris.isNotEmpty()) launchShareFiles(uris)
+                }
+
                 MainScreen(
                     state = state,
                     onReceiverChanged = ::setReceiverEnabled,
@@ -97,6 +112,14 @@ class MainActivity : ComponentActivity() {
                     onSecureReceiveOnlyChanged = viewModel::setSecureReceiveOnly,
                     onEnhancedModeChanged = viewModel::setEnhancedMode,
                     onCaptureLogs = ::captureAndShareLogs,
+                    onChooseFiles = {
+                        runCatching { chooseFiles.launch(arrayOf("*/*")) }
+                            .onFailure { runCatching { chooseFilesFallback.launch("*/*") } }
+                    },
+                    onCustomMacChanged = viewModel::setCustomP2pMac,
+                    onSkipMacValidationChanged = viewModel::setSkipMacValidation,
+                    onCaptureMac = { viewModel.captureP2pMac(showResult = true) },
+                    onClearSavedMac = viewModel::clearSavedP2pMac,
                 )
             }
         }
@@ -115,6 +138,35 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshReceiveState()
+        // 连上 ADB 后再打开应用，也会自动读取并保存真实 MAC。
+        viewModel.onForeground()
+    }
+
+    /**
+     * 把文件选择器返回的 Uri 列表按 ACTION_SEND_MULTIPLE 的口径交给 ShareActivity，
+     * 复用系统分享那条已经验证过的发送链路（蓝牙发现 → 选设备 → Wi-Fi Direct 传输）。
+     */
+    private fun launchShareFiles(uris: List<Uri>) {
+        val shareIntent = Intent(this, ShareActivity::class.java).apply {
+            action = Intent.ACTION_SEND_MULTIPLE
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // ClipData 保证多个 Uri 的读权限一并传递给目标 Activity 与发送服务。
+            val clip = ClipData.newRawUri("selected files", uris.first())
+            uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
+            clipData = clip
+        }
+        uris.forEach { uri ->
+            runCatching {
+                grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        try {
+            startActivity(shareIntent)
+        } catch (error: Throwable) {
+            Toast.makeText(this, "无法打开发送页面", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun recoverReceive() {

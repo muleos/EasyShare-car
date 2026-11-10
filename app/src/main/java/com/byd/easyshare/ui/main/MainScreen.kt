@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -36,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -49,6 +51,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -88,13 +91,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.material.color.ColorRoles
 import com.google.android.material.color.MaterialColors
-import com.byd.easyshare.AppSettings
 import com.byd.easyshare.R
 import com.byd.easyshare.ui.PagAnimation
 import com.byd.easyshare.ui.transfer.EasyShareSheetActions
 import com.byd.easyshare.ui.transfer.EasyShareSheetContainer
 import com.byd.easyshare.utils.DeviceUtils
 import com.byd.easyshare.utils.P2pIdentity
+import com.byd.easyshare.utils.P2pMacManager
 
 private val HomeItemMinHeight = 84.dp
 
@@ -110,14 +113,15 @@ fun MainScreen(
     onSecureReceiveOnlyChanged: (Boolean) -> Unit,
     onEnhancedModeChanged: (Boolean) -> Unit,
     onCaptureLogs: () -> Unit,
+    onChooseFiles: () -> Unit,
+    onCustomMacChanged: (String) -> Unit,
+    onSkipMacValidationChanged: (Boolean) -> Unit,
+    onCaptureMac: () -> Unit,
+    onClearSavedMac: () -> Unit,
 ) {
     var showNameDialog by rememberSaveable { mutableStateOf(false) }
     var showBrandDialog by rememberSaveable { mutableStateOf(false) }
-    val context = LocalContext.current
-    val appSettings = remember(context) { AppSettings(context) }
     var showP2pMacDialog by rememberSaveable { mutableStateOf(false) }
-    var customP2pMac by rememberSaveable { mutableStateOf(appSettings.customP2pMac) }
-    var skipMacValidation by rememberSaveable { mutableStateOf(appSettings.skipMacValidation) }
     // 免 root / 免 Shizuku 读取本机 p2p 网卡地址，仅用于设置页展示与发送时兜底
     val detectedP2pMac = remember { P2pIdentity.fromInterfaces() }
     val singlePaneListState = rememberLazyListState()
@@ -137,11 +141,11 @@ fun MainScreen(
 
     if (showP2pMacDialog) {
         P2pMacDialog(
-            currentMac = customP2pMac,
+            currentMac = state.customP2pMac,
+            suggestedMac = state.savedP2pMac.ifBlank { detectedP2pMac ?: "" },
             onDismiss = { showP2pMacDialog = false },
             onSave = {
-                customP2pMac = it
-                appSettings.customP2pMac = it
+                onCustomMacChanged(it)
                 showP2pMacDialog = false
             },
         )
@@ -169,6 +173,8 @@ fun MainScreen(
             state = state,
             onReceiverChanged = onReceiverChanged,
         )
+        Spacer(Modifier.height(12.dp))
+        SendFilesCard(onChooseFiles = onChooseFiles)
         Spacer(Modifier.height(20.dp))
     }
     val settingsContent: @Composable () -> Unit = {
@@ -202,24 +208,50 @@ fun MainScreen(
             )
             SettingDivider()
             NativeSettingItem(
-                title = "P2P MAC 地址（手动填写）",
-                summary = customP2pMac.ifBlank {
-                    detectedP2pMac?.let { "自动检测到 $it" } ?: "未检测到（建组后会再读一次 p2p0）"
+                title = "ADB 读取并保存 MAC",
+                summary = buildString {
+                    if (state.savedP2pMac.isNotBlank()) {
+                        append("已保存 ")
+                        append(state.savedP2pMac)
+                        append("（")
+                        append(P2pMacManager.sourceLabel(state.savedP2pMacSource))
+                        append("）")
+                    } else {
+                        append("未保存；连上 ADB / Shizuku 后会自动读取并写入本机")
+                    }
+                    append(if (state.shizukuAvailable && state.shizukuGranted) "｜ADB 已连接" else "｜ADB 未连接")
+                    if (state.capturingMac) append("｜正在读取…")
                 },
-                onClick = { showP2pMacDialog = true },
+                onClick = onCaptureMac,
             )
             SettingDivider()
             NativeSettingItem(
-                title = "跳过 MAC 校验（EasyShare 互传）",
-                summary = "开启后无需 Shizuku / ADB；仅对端为手机自带互传时需关闭",
-                checked = skipMacValidation,
-                onClick = {
-                    skipMacValidation = !skipMacValidation
-                    appSettings.skipMacValidation = skipMacValidation
+                title = "P2P MAC 地址（手动输入 / 保存）",
+                summary = state.customP2pMac.ifBlank {
+                    state.savedP2pMac.takeIf { it.isNotBlank() }
+                        ?.let { "已保存 $it，可直接发送；点此手动输入" }
+                        ?: detectedP2pMac?.let { "检测到 $it，点此填入并保存" }
+                        ?: "未检测到；可手动输入并保存到本机"
                 },
+                onClick = { showP2pMacDialog = true },
+            )
+            if (state.savedP2pMac.isNotBlank()) {
+                SettingDivider()
+                NativeSettingItem(
+                    title = "清除已保存的 MAC",
+                    summary = "只清除自动保存的地址，不影响手填值",
+                    onClick = onClearSavedMac,
+                )
+            }
+            SettingDivider()
+            NativeSettingItem(
+                title = "跳过 MAC 校验（EasyShare 互传）",
+                summary = "开启后无需 Shizuku / ADB；仅对端为手机自带互传时需关闭（此时会用已保存的真实地址）",
+                checked = state.skipMacValidation,
+                onClick = { onSkipMacValidationChanged(!state.skipMacValidation) },
                 trailing = {
                     Switch(
-                        checked = skipMacValidation,
+                        checked = state.skipMacValidation,
                         onCheckedChange = null,
                     )
                 },
@@ -242,6 +274,8 @@ fun MainScreen(
     }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // 动态系统栏 + 刘海 / 挖孔避让（横屏状态栏移到侧边时同样生效），不写死数值。
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
@@ -493,6 +527,35 @@ private fun ReceiveFilesCard(state: MainUiState, onReceiverChanged: (Boolean) ->
     }
 }
 
+/** 应用内发送入口：调起系统文件选择器（SAF），选完直接进入互传设备选择页。 */
+@Composable
+private fun SendFilesCard(onChooseFiles: () -> Unit) {
+    SettingsCard {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = HomeItemMinHeight)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "发送文件",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "打开系统文件管理器，可一次选择多个文件发送",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = onChooseFiles) {
+                Text("选择文件")
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingsCard(content: @Composable () -> Unit) {
     Card(
@@ -663,6 +726,7 @@ internal fun heroIllustrationColorMatrix(color: Int): FloatArray {
 @Composable
 private fun P2pMacDialog(
     currentMac: String,
+    suggestedMac: String,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
 ) {
@@ -675,10 +739,26 @@ private fun P2pMacDialog(
                 .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
             Text(
-                text = "手动填写本机 P2P Device Address。留空时自动尝试读取 p2p0 网卡；仍拿不到且开启「跳过 MAC 校验」时使用占位地址。仅当接收方是手机自带互传时，才需关闭跳过校验并填写真实值。",
+                text = "手动填写本机 P2P Device Address，点「保存」即写入本机：关闭 ADB / Shizuku、重启车机后依然有效。"
+                        + "留空时自动使用已保存的地址或 p2p0 网卡地址；仍拿不到且开启「跳过 MAC 校验」时使用占位地址。"
+                        + "仅当接收方是手机自带互传时，才需关闭跳过校验并填写真实值。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (suggestedMac.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "读取到的地址：$suggestedMac",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { mac = suggestedMac }) {
+                        Text("填入")
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = mac,
@@ -694,7 +774,7 @@ private fun P2pMacDialog(
                         when {
                             invalid -> "无法识别：请填 12 位十六进制，如 40:b0:fa:82:17:46、40-b0-fa-82-17-46 或 40b0fa821746"
                             normalized != null -> "将按 $normalized 使用"
-                            else -> "留空 = 自动读取 p2p0 网卡，读不到则用占位地址"
+                            else -> "留空 = 使用已保存地址 / p2p0 网卡，读不到则用占位地址"
                         },
                     )
                 },

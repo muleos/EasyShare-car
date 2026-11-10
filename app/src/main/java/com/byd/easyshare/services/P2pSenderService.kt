@@ -94,6 +94,7 @@ import com.byd.easyshare.utils.LiveStage
 import com.byd.easyshare.utils.LiveUpdateCoordinator
 import com.byd.easyshare.utils.NotificationUtils
 import com.byd.easyshare.utils.P2pIdentity
+import com.byd.easyshare.utils.P2pMacManager
 import com.byd.easyshare.utils.TRANSFER_COMPLETION_DISPLAY_MILLIS
 import com.byd.easyshare.utils.awaitTransferCompletionDisplay
 import com.byd.easyshare.utils.ProgressCounter
@@ -846,20 +847,42 @@ class P2pSenderService : BaseP2pService() {
                 // 手填值先归一化（兼容 aa-bb-cc-dd-ee-ff / aabbccddeeff / 大写），
                 // 否则上游只认冒号小写写法，用户填的地址会被静默丢弃。
                 val typedMac = P2pIdentity.usable(localSettings.customP2pMac)
+                // ADB / 上一次发送时已持久化的真实地址：关掉 ADB、重启车机后依然可用，
+                // 优先级仅次于手填值。这是「一次读取、永久生效」的关键。
+                val savedMac = P2pIdentity.usable(localSettings.savedP2pMac)
                 // 建组后本机即群主，group.owner 就是自己；拿不到时直接读 p2p0 网卡，
                 // 这一步不需要 Shizuku / ADB，多数车机固件可用。
                 val detectedMac = P2pIdentity.fromInterfaces()
                 val groupMac = DeviceUtils.usableP2pDeviceAddress(group.owner?.deviceAddress)
-                val reportedMac = typedMac ?: groupMac ?: detectedMac
+                // 本次读到的真实地址立刻落盘，供以后无 ADB 时直接使用。
+                if (savedMac == null) {
+                    when {
+                        groupMac != null -> P2pMacManager.persist(
+                            this@P2pSenderService, groupMac, P2pMacManager.SOURCE_GROUP,
+                        )
+                        detectedMac != null -> P2pMacManager.persist(
+                            this@P2pSenderService, detectedMac, P2pMacManager.SOURCE_INTERFACE,
+                        )
+                        else -> Unit
+                    }
+                }
+                val reportedMac = typedMac ?: savedMac ?: groupMac ?: detectedMac
+                val adbMac = if (reportedMac == null && !localSettings.skipMacValidation) {
+                    DeviceUtils.usableP2pDeviceAddress(
+                        ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
+                    )
+                } else {
+                    null
+                }
+                if (adbMac != null && savedMac == null) {
+                    P2pMacManager.persist(this@P2pSenderService, adbMac, P2pMacManager.SOURCE_ADB)
+                }
                 val p2pMac = if (localSettings.skipMacValidation) {
                     // EasyShare <-> EasyShare / HandySend 都不校验 P2P 设备身份：
                     // 优先用真实地址，全部拿不到时用占位值，永不因缺少 MAC 而失败。
                     reportedMac ?: P2pIdentity.PLACEHOLDER_ADDRESS
                 } else {
-                    reportedMac
-                        ?: DeviceUtils.usableP2pDeviceAddress(
-                            ShizukuUtils.getP2pDeviceAddress(this@P2pSenderService),
-                        )
+                    reportedMac ?: adbMac
                         ?: throw ExceptionWithMessage(
                             "Missing P2P device address", IllegalStateException(), R.string.error_p2p_failed,
                         )
@@ -867,12 +890,15 @@ class P2pSenderService : BaseP2pService() {
                 Log.i(
                     TAG,
                     "P2P identity resolved: source=" +
-                        when (p2pMac) {
-                            typedMac -> "manual"
-                            groupMac -> "group-owner"
-                            detectedMac -> "interface"
+                        when {
+                            typedMac != null && p2pMac == typedMac -> "manual"
+                            savedMac != null && p2pMac == savedMac -> "saved"
+                            groupMac != null && p2pMac == groupMac -> "group-owner"
+                            detectedMac != null && p2pMac == detectedMac -> "interface"
+                            adbMac != null && p2pMac == adbMac -> "adb"
                             else -> "placeholder"
-                        },
+                        } +
+                        ", saved=${savedMac ?: "none"}",
                 )
 
                 withTimeoutReason(

@@ -93,3 +93,50 @@ export SIGNING_KEY_PASSWORD=你的口令
 ## 六、兜底方案
 
 车机开热点或连手机热点，用 ES 文件浏览器「快传」、FTP/HTTP 服务 App，或 U 盘直传，均不需要 MAC / ADB / Shizuku。
+
+---
+
+## 七、v3：MAC 一次读取永久保存 + 应用内发送文件选择器
+
+版本 `1.0.5-car`（`versionCode = 12`，与 v2 同签名，可直接覆盖安装）。
+
+### 7.1 MAC 自动保存（关掉 ADB 也能发）
+
+| 文件 | 改动 |
+|---|---|
+| `AppSettings.kt` | 新增 `savedP2pMac` / `savedP2pMacSource` / `savedP2pMacTime` 三个持久化字段与 `saveDetectedP2pMac()`（归一化 + 协议校验后落盘）、`clearSavedP2pMac()` |
+| `utils/P2pMacManager.kt`（新增） | 统一封装捕获与落盘：ADB / Shizuku 的 `WifiP2pManager.requestDeviceInfo` → `p2p0` 网卡，读到即写 SharedPreferences；`persistIfNew()` 避免重复刷新 |
+| `ui/main/MainViewModel.kt` | 冷启动、Shizuku binder 到达、权限授权成功、回到前台时自动捕获一次；设置页可手动「立即读取并保存」/「清除」；界面状态新增已保存值、来源、读取中 |
+| `services/P2pSenderService.kt` | 解析顺序改为 **手填 → 已保存 → 群主 → p2p0 → Shizuku → 占位**；发送时读到的真实地址也回写保存；日志新增 `source=saved|adb` |
+| `ui/main/MainScreen.kt` | 设置页新增「ADB 读取并保存 MAC」状态项、「清除已保存的 MAC」；手填对话框显示已保存/检测到的地址，可一键填入后保存 |
+
+生效路径：
+
+1. 车机通过 adb 启动 Shizuku 并授权 → App 收到 binder（或打开 App / 点设置页「ADB 读取并保存 MAC」）→ 读到真实 `deviceAddress` → 写入本机 `SharedPreferences`。
+2. 之后断开 ADB、停止 Shizuku、甚至重启车机，发送时都会优先复用该地址；`跳过 MAC 校验` 关闭时也不会再抛 `Missing P2P device address`。
+3. Shizuku 不可用时自动退回免权限的 `p2p0` 网卡读取；建组成功后拿到的地址同样会保存。
+4. 也可以把 adb 命令读到的地址手动输入并保存（输入框支持 `aa:bb:…` / `aa-bb-…` / 12 位十六进制 / 大写）：
+
+```bash
+adb shell cat /sys/class/net/p2p0/address   # 需先开启 Wi-Fi Direct / 后台接收
+```
+
+手填值与自动保存值分开存放，手填值优先级更高且不会被自动捕获覆盖。
+
+### 7.2 应用内发送文件选择器
+
+| 文件 | 改动 |
+|---|---|
+| `MainActivity.kt` | 注册 `OpenMultipleDocuments`（SAF，多选），无 DocumentsUI 的车机回退 `GetMultipleContents`；把 Uri 列表按 `ACTION_SEND_MULTIPLE` 口径交给 `ShareActivity`，带 `FLAG_GRANT_READ_URI_PERMISSION` + ClipData 传递多个 Uri 的读权限 |
+| `ui/main/MainScreen.kt` | 首页新增「发送文件」卡片与「选择文件」按钮 |
+
+复用原有系统分享链路（蓝牙发现 → 选设备 → Wi-Fi Direct 传输），`ShareActivity` 无需改动。车机上不再需要先到文件管理器里「分享到比亚迪分享」。
+
+### 7.3 验证
+
+```bash
+adb logcat -s P2pSenderService
+# P2P identity resolved: source=manual|saved|group-owner|interface|adb|placeholder, saved=xx:xx:...
+```
+
+`source=saved` 表示正在使用已持久化的地址（ADB 已关闭时也应出现）。
