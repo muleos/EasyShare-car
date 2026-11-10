@@ -1,7 +1,10 @@
 package com.byd.easyshare.ui.main
 
+import android.content.Intent
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.RenderEffect
+import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -87,11 +90,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.material.color.ColorRoles
 import com.google.android.material.color.MaterialColors
 import com.byd.easyshare.R
+import com.byd.easyshare.models.ReceivedHistoryItem
 import com.byd.easyshare.ui.PagAnimation
 import com.byd.easyshare.ui.transfer.EasyShareSheetActions
 import com.byd.easyshare.ui.transfer.EasyShareSheetContainer
@@ -115,15 +120,27 @@ fun MainScreen(
     onCaptureLogs: () -> Unit,
     onChooseFiles: () -> Unit,
     onCustomMacChanged: (String) -> Unit,
-    onSkipMacValidationChanged: (Boolean) -> Unit,
     onCaptureMac: () -> Unit,
     onClearSavedMac: () -> Unit,
+    onClearReceivedHistory: () -> Unit,
 ) {
     var showNameDialog by rememberSaveable { mutableStateOf(false) }
     var showBrandDialog by rememberSaveable { mutableStateOf(false) }
     var showP2pMacDialog by rememberSaveable { mutableStateOf(false) }
     // 免 root / 免 Shizuku 读取本机 p2p 网卡地址，仅用于设置页展示与发送时兜底
     val detectedP2pMac = remember { P2pIdentity.fromInterfaces() }
+    val context = LocalContext.current
+    // 历史列表点击 → 用系统「打开方式」打开收到的文件；文件已被删除时给出提示。
+    val onOpenReceivedFile: (ReceivedHistoryItem) -> Unit = { item ->
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(item.uri.toUri(), item.mimeType.ifBlank { "*/*" })
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val opened = runCatching { context.startActivity(intent) }.isSuccess
+        if (!opened) {
+            Toast.makeText(context, R.string.received_open_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
     val singlePaneListState = rememberLazyListState()
     val receiveControlsListState = rememberLazyListState()
     val introductionScrollState = rememberScrollState()
@@ -142,12 +159,18 @@ fun MainScreen(
     if (showP2pMacDialog) {
         P2pMacDialog(
             currentMac = state.customP2pMac,
-            suggestedMac = state.savedP2pMac.ifBlank { detectedP2pMac ?: "" },
+            savedMac = state.savedP2pMac,
+            savedSource = state.savedP2pMacSource,
+            adbConnected = state.shizukuAvailable && state.shizukuGranted,
+            capturing = state.capturingMac,
+            detectedMac = detectedP2pMac ?: "",
             onDismiss = { showP2pMacDialog = false },
             onSave = {
                 onCustomMacChanged(it)
                 showP2pMacDialog = false
             },
+            onCapture = onCaptureMac,
+            onClearSaved = onClearSavedMac,
         )
     }
 
@@ -208,53 +231,33 @@ fun MainScreen(
             )
             SettingDivider()
             NativeSettingItem(
-                title = "ADB 读取并保存 MAC",
+                title = stringResource(R.string.p2p_mac_title),
                 summary = buildString {
-                    if (state.savedP2pMac.isNotBlank()) {
-                        append("已保存 ")
-                        append(state.savedP2pMac)
-                        append("（")
-                        append(P2pMacManager.sourceLabel(state.savedP2pMacSource))
-                        append("）")
-                    } else {
-                        append("未保存；连上 ADB / Shizuku 后会自动读取并写入本机")
+                    val manual = state.customP2pMac
+                    when {
+                        manual.isNotBlank() -> {
+                            append("手动 ")
+                            append(manual)
+                        }
+                        state.savedP2pMac.isNotBlank() -> {
+                            append("已保存 ")
+                            append(state.savedP2pMac)
+                            append("（")
+                            append(P2pMacManager.sourceLabel(state.savedP2pMacSource))
+                            append("）")
+                        }
+                        else -> append("未保存，连上 ADB 后自动读取，也可手动输入")
                     }
-                    append(if (state.shizukuAvailable && state.shizukuGranted) "｜ADB 已连接" else "｜ADB 未连接")
+                    append(
+                        if (state.shizukuAvailable && state.shizukuGranted) {
+                            "｜ADB 已连接"
+                        } else {
+                            "｜ADB 未连接"
+                        },
+                    )
                     if (state.capturingMac) append("｜正在读取…")
                 },
-                onClick = onCaptureMac,
-            )
-            SettingDivider()
-            NativeSettingItem(
-                title = "P2P MAC 地址（手动输入 / 保存）",
-                summary = state.customP2pMac.ifBlank {
-                    state.savedP2pMac.takeIf { it.isNotBlank() }
-                        ?.let { "已保存 $it，可直接发送；点此手动输入" }
-                        ?: detectedP2pMac?.let { "检测到 $it，点此填入并保存" }
-                        ?: "未检测到；可手动输入并保存到本机"
-                },
                 onClick = { showP2pMacDialog = true },
-            )
-            if (state.savedP2pMac.isNotBlank()) {
-                SettingDivider()
-                NativeSettingItem(
-                    title = "清除已保存的 MAC",
-                    summary = "只清除自动保存的地址，不影响手填值",
-                    onClick = onClearSavedMac,
-                )
-            }
-            SettingDivider()
-            NativeSettingItem(
-                title = "跳过 MAC 校验（EasyShare 互传）",
-                summary = "开启后无需 Shizuku / ADB；仅对端为手机自带互传时需关闭（此时会用已保存的真实地址）",
-                checked = state.skipMacValidation,
-                onClick = { onSkipMacValidationChanged(!state.skipMacValidation) },
-                trailing = {
-                    Switch(
-                        checked = state.skipMacValidation,
-                        onCheckedChange = null,
-                    )
-                },
             )
         }
         Spacer(Modifier.height(20.dp))
@@ -315,6 +318,14 @@ fun MainScreen(
                             onBrandClick = { showBrandDialog = true },
                             onRecoverReceive = onRecoverReceive,
                         )
+                        // 平板 / 横屏双栏：接收历史放在左侧应用名称（设备卡）下方。
+                        RecentReceivedCard(
+                            items = state.receivedHistory,
+                            maxRows = if (availableHeightDp < 560f) 3 else 5,
+                            onOpen = onOpenReceivedFile,
+                            onClear = onClearReceivedHistory,
+                            modifier = Modifier.padding(bottom = 16.dp),
+                        )
                     }
                     LazyColumn(
                         state = receiveControlsListState,
@@ -344,6 +355,14 @@ fun MainScreen(
                             onNameClick = { showNameDialog = true },
                             onBrandClick = { showBrandDialog = true },
                             onRecoverReceive = onRecoverReceive,
+                        )
+                    }
+                    item {
+                        RecentReceivedCard(
+                            items = state.receivedHistory,
+                            maxRows = 5,
+                            onOpen = onOpenReceivedFile,
+                            onClear = onClearReceivedHistory,
                         )
                     }
                     item {
@@ -556,6 +575,127 @@ private fun SendFilesCard(onChooseFiles: () -> Unit) {
     }
 }
 
+/**
+ * 首页「最近接收」：列出收到的文件，点击用系统打开方式打开。
+ * 双栏布局里放在左侧设备卡（应用名）下方，单栏布局里跟在设备卡后面。
+ */
+@Composable
+private fun RecentReceivedCard(
+    items: List<ReceivedHistoryItem>,
+    maxRows: Int,
+    onOpen: (ReceivedHistoryItem) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.received_history_title),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (items.isNotEmpty()) {
+                TextButton(onClick = onClear) {
+                    Text(stringResource(R.string.received_history_clear))
+                }
+            }
+        }
+        if (items.isEmpty()) {
+            Text(
+                text = stringResource(R.string.received_history_empty),
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 18.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            items.take(maxRows).forEachIndexed { index, item ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+                }
+                ReceivedHistoryRow(item = item, onOpen = { onOpen(item) })
+            }
+            if (items.size > maxRows) {
+                Text(
+                    text = stringResource(R.string.received_history_more, items.size - maxRows),
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 14.dp, top = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReceivedHistoryRow(item: ReceivedHistoryItem, onOpen: () -> Unit) {
+    val relativeTime = remember(item.time) {
+        DateUtils.getRelativeTimeSpanString(
+            item.time,
+            System.currentTimeMillis(),
+            DateUtils.MINUTE_IN_MILLIS,
+        ).toString()
+    }
+    val sizeLabel = remember(item.size) { formatHistorySize(item.size) }
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onOpen)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(historyIcon(item.mimeType)),
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = listOfNotNull(relativeTime, sizeLabel.takeIf { it.isNotBlank() })
+                    .joinToString(" · "),
+                modifier = Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun historyIcon(mimeType: String): Int = when {
+    mimeType.startsWith("image/") -> R.drawable.ic_attachment_image
+    mimeType.startsWith("video/") -> R.drawable.ic_attachment_video
+    mimeType.startsWith("text/") -> R.drawable.ic_attachment_text
+    else -> R.drawable.ic_attachment_file
+}
+
+private fun formatHistorySize(bytes: Long): String = when {
+    bytes <= 0L -> ""
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "%.0f KB".format(bytes / 1024.0)
+    bytes < 1024L * 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    else -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
 @Composable
 private fun SettingsCard(content: @Composable () -> Unit) {
     Card(
@@ -726,55 +866,84 @@ internal fun heroIllustrationColorMatrix(color: Int): FloatArray {
 @Composable
 private fun P2pMacDialog(
     currentMac: String,
-    suggestedMac: String,
+    savedMac: String,
+    savedSource: String,
+    adbConnected: Boolean,
+    capturing: Boolean,
+    detectedMac: String,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
+    onCapture: () -> Unit,
+    onClearSaved: () -> Unit,
 ) {
     var mac by rememberSaveable(currentMac) { mutableStateOf(currentMac) }
     val normalized = P2pIdentity.usable(mac)
     val invalid = mac.isNotBlank() && normalized == null
-    HomeSettingsSheet("P2P MAC 地址", onDismiss) {
+    val suggestedMac = savedMac.ifBlank { detectedMac }
+    HomeSettingsSheet(stringResource(R.string.p2p_mac_title), onDismiss) {
         Column(
             Modifier.fillMaxWidth().weight(1f, fill = false)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
             Text(
-                text = "手动填写本机 P2P Device Address，点「保存」即写入本机：关闭 ADB / Shizuku、重启车机后依然有效。"
-                        + "留空时自动使用已保存的地址或 p2p0 网卡地址；仍拿不到且开启「跳过 MAC 校验」时使用占位地址。"
-                        + "仅当接收方是手机自带互传时，才需关闭跳过校验并填写真实值。",
+                text = "连上 ADB / Shizuku 后会自动读取本机 P2P 地址并保存到本机，关闭 ADB、重启车机后依然有效。"
+                        + "也可以在这里手动输入地址后保存。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (suggestedMac.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "读取到的地址：$suggestedMac",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(onClick = { mac = suggestedMac }) {
-                        Text("填入")
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = buildString {
+                        if (savedMac.isNotBlank()) {
+                            append("已保存 ")
+                            append(savedMac)
+                            append("（")
+                            append(P2pMacManager.sourceLabel(savedSource))
+                            append("）")
+                        } else {
+                            append("尚未保存地址")
+                        }
+                        append(if (adbConnected) "｜ADB 已连接" else "｜ADB 未连接")
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onCapture, enabled = !capturing) {
+                    Text(if (capturing) "读取中…" else "立即读取")
+                }
+                if (savedMac.isNotBlank()) {
+                    TextButton(onClick = onClearSaved) {
+                        Text("清除")
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = mac,
                 onValueChange = { mac = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("P2P MAC") },
+                label = { Text(stringResource(R.string.p2p_mac_title)) },
                 placeholder = { Text("40:b0:fa:82:17:46") },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 isError = invalid,
+                trailingIcon = if (suggestedMac.isNotBlank()) {
+                    {
+                        TextButton(onClick = { mac = suggestedMac }) {
+                            Text("填入")
+                        }
+                    }
+                } else {
+                    null
+                },
                 supportingText = {
                     Text(
                         when {
                             invalid -> "无法识别：请填 12 位十六进制，如 40:b0:fa:82:17:46、40-b0-fa-82-17-46 或 40b0fa821746"
                             normalized != null -> "将按 $normalized 使用"
-                            else -> "留空 = 使用已保存地址 / p2p0 网卡，读不到则用占位地址"
+                            else -> "留空 = 使用已保存地址 / p2p0 网卡"
                         },
                     )
                 },

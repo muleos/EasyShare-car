@@ -31,11 +31,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.byd.easyshare"
+        applicationId = "com.android.easyshare"
         minSdk = 31
         targetSdk = 37
-        versionCode = 12
-        versionName = "1.0.5-car"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     signingConfigs {

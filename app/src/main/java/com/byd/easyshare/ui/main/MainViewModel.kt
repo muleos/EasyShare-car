@@ -24,10 +24,12 @@ import kotlinx.coroutines.withContext
 import com.byd.easyshare.AppSettings
 import com.byd.easyshare.MyApplication
 import com.byd.easyshare.R
+import com.byd.easyshare.models.ReceivedHistoryItem
 import com.byd.easyshare.utils.DeviceUtils
 import com.byd.easyshare.utils.IncomingTransferUiCoordinator
 import com.byd.easyshare.utils.LiveUpdateCoordinator
 import com.byd.easyshare.utils.P2pMacManager
+import com.byd.easyshare.utils.ReceivedHistoryStore
 import com.byd.easyshare.utils.TransferUiCoordinator
 import com.byd.easyshare.utils.ServiceState
 import com.byd.easyshare.utils.ShizukuUtils
@@ -60,6 +62,8 @@ data class MainUiState(
     val savedP2pMacTime: Long = 0L,
     val skipMacValidation: Boolean = true,
     val capturingMac: Boolean = false,
+    /** 首页「最近接收」列表，最新在前。 */
+    val receivedHistory: List<ReceivedHistoryItem> = emptyList(),
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -167,7 +171,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 TransferUiCoordinator.states,
                 ::homeTransferStatus,
             ).collect { status ->
+                val previous = _state.value.transferStatus
                 _state.value = _state.value.copy(transferStatus = status)
+                // 传输从「进行中」回到空闲 = 已结束，此时刷新接收历史。
+                if (previous != null && status == null) refreshReceivedHistory()
             }
         }
         context.registerInternalBroadcastReceiver(
@@ -193,6 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Shizuku.addBinderDeadListener(binderDeadListener)
         context.sendBroadcast(ServiceState.getQueryIntent())
         refreshMacState()
+        refreshReceivedHistory()
         // 冷启动也尝试一次：无 ADB 时可从 p2p0 网卡读到并保存。
         captureP2pMac()
     }
@@ -200,6 +208,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 回到前台时：还没保存过地址、或 ADB 正连着，就再捕获一次（含地址变化的情况）。 */
     fun onForeground() {
         refreshMacState()
+        refreshReceivedHistory()
         val adbGranted = _state.value.shizukuAvailable &&
             runCatching {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
@@ -225,15 +234,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshMacState()
     }
 
-    fun setSkipMacValidation(enabled: Boolean) {
-        settings.skipMacValidation = enabled
-        refreshMacState()
-    }
-
     fun clearSavedP2pMac() {
         P2pMacManager.clear(context)
         refreshMacState()
         Toast.makeText(context, "已清除自动保存的 MAC", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 读取「最近接收」列表。 */
+    fun refreshReceivedHistory() {
+        val entries = runCatching { ReceivedHistoryStore.list(context) }.getOrDefault(emptyList())
+        _state.value = _state.value.copy(receivedHistory = entries)
+    }
+
+    fun clearReceivedHistory() {
+        ReceivedHistoryStore.clear(context)
+        refreshReceivedHistory()
+        Toast.makeText(context, "已清空接收历史", Toast.LENGTH_SHORT).show()
     }
 
     /**

@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">比亚迪分享</string>
+    <string name="app_name">EasyShare</string>
     <string name="send">Send</string>
     <string name="discoverable_desc">Can receive files from nearby devices</string>
     <string name="receiver_switch_title">Receive in background</string>
-    <string name="receiver_tile_label">比亚迪分享</string>
+    <string name="receiver_tile_label">EasyShare</string>
     <string name="receiver_switch_summary">Receive files while the app is in the background</string>
     <string name="secure_receive_title">Secure transfer</string>
     <string name="secure_receive_summary">Only receive content transferred using the secure protocol</string>
@@ -147,4 +147,10 @@
     <string name="noti_chan_sending">Sending files</string>
     <string name="noti_chan_receiving">Receiving files</string>
     <string name="noti_chan_other">Other notifications</string>
+    <string name="p2p_mac_title">P2P MAC address</string>
+    <string name="received_history_title">Recent files</string>
+    <string name="received_history_empty">No received files yet. Files you receive will show up here.</string>
+    <string name="received_history_clear">Clear</string>
+    <string name="received_history_more">%1$d more…</string>
+    <string name="received_open_failed">No app can open this file</string>
 </resources>

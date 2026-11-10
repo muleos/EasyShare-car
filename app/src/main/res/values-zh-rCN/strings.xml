@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">比亚迪分享</string>
+    <string name="app_name">EasyShare</string>
     <string name="send">发送</string>
     <string name="discoverable_desc">可接收附近设备发送的文件</string>
     <string name="receiver_switch_title">后台接收</string>
@@ -142,4 +142,10 @@
     <string name="noti_chan_sending">发送文件</string>
     <string name="noti_chan_receiving">接收文件</string>
     <string name="noti_chan_other">其他通知</string>
+    <string name="p2p_mac_title">P2P MAC 地址</string>
+    <string name="received_history_title">最近接收</string>
+    <string name="received_history_empty">还没有接收记录，收到的文件会显示在这里</string>
+    <string name="received_history_clear">清空</string>
+    <string name="received_history_more">还有 %1$d 个…</string>
+    <string name="received_open_failed">没有可以打开该文件的应用</string>
 </resources>

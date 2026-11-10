@@ -102,6 +102,7 @@ import com.byd.easyshare.utils.TAG
 import com.byd.easyshare.utils.TransferLimitException
 import com.byd.easyshare.utils.TransferLimits
 import com.byd.easyshare.utils.ReceivedFilesSnapshot
+import com.byd.easyshare.utils.ReceivedHistoryStore
 import com.byd.easyshare.utils.TransferStatusProtocol
 import com.byd.easyshare.utils.ZipPathValidatorCallback
 import com.byd.easyshare.utils.awaitWithTimeout
@@ -1176,6 +1177,10 @@ class P2pReceiverService : BaseP2pService() {
             null
         }
         IncomingTransferUiCoordinator.complete(taskId, files, partial, token)
+        // 首页「最近接收」列表：接收完成后落一条记录，失败不影响文件本身。
+        runCatching {
+            ReceivedHistoryStore.record(this@P2pReceiverService, files, state.senderName)
+        }.onFailure { Log.w(TAG, "Failed to record received history", it) }
         ensureReceiveCompleted(taskId)
         showTransferResult(
             taskId, createCompletedNotification(taskId, state.senderName, files, partial, contentIntent),

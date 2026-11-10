@@ -117,9 +117,9 @@ class MainActivity : ComponentActivity() {
                             .onFailure { runCatching { chooseFilesFallback.launch("*/*") } }
                     },
                     onCustomMacChanged = viewModel::setCustomP2pMac,
-                    onSkipMacValidationChanged = viewModel::setSkipMacValidation,
                     onCaptureMac = { viewModel.captureP2pMac(showResult = true) },
                     onClearSavedMac = viewModel::clearSavedP2pMac,
+                    onClearReceivedHistory = viewModel::clearReceivedHistory,
                 )
             }
         }

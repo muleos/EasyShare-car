@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标背景：华为分享蓝色渐变（#4791F6 → #3478F0），与前景白色分享弧线配套。 -->
+<!-- 自适应图标背景：清爽蓝色微渐变（#4285F4 → #2F6FE4），与前景白色声波配套。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
@@ -16,10 +16,10 @@
                 android:endY="108">
                 <item
                     android:offset="0"
-                    android:color="#FF4791F6" />
+                    android:color="#FF4285F4" />
                 <item
                     android:offset="1"
-                    android:color="#FF3478F0" />
+                    android:color="#FF2F6FE4" />
             </gradient>
         </aapt:attr>
     </path>
